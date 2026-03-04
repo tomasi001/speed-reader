@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speed Reader</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* ── Main Area ── */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: margin-right 0.3s ease;
+    overflow-y: auto;
+  }
+
+  /* ── Drop Zone ── */
+  #dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    border: 2px dashed #444;
+    border-radius: 16px;
+    padding: 60px 80px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #dropzone:hover, #dropzone.dragover {
+    border-color: #ff6b35;
+    background: rgba(255, 107, 53, 0.05);
+  }
+  #dropzone .icon { font-size: 48px; opacity: 0.5; }
+  #dropzone .label { font-size: 18px; color: #888; }
+  #dropzone .sublabel { font-size: 13px; color: #555; }
+  #file-input { display: none; }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: 500px;
+    margin: 20px 0;
+    color: #444;
+    font-size: 13px;
+  }
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #333;
+  }
+
+  #paste-area {
+    width: 100%;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  #paste-input {
+    width: 100%;
+    height: 120px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 10px;
+    color: #e0e0e0;
+    padding: 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  #paste-input:focus { border-color: #ff6b35; }
+  #paste-input::placeholder { color: #555; }
+  #load-paste-btn {
+    padding: 10px 28px;
+    font-size: 14px;
+    background: #ff6b35;
+    border-color: #ff6b35;
+    color: #fff;
+    border-radius: 8px;
+  }
+  #load-paste-btn:hover { background: #e55a25; }
+
+  /* ── Reader View ── */
+  #reader { display: none; flex-direction: column; align-items: center; width: 100%; height: 100%; }
+
+  /* Word display */
+  #word-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
+  }
+  #word-display {
+    font-size: clamp(36px, 6vw, 72px);
+    font-weight: 600;
+    letter-spacing: 2px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    white-space: nowrap;
+    user-select: none;
+  }
+  #word-display .orp { color: #ff6b35; }
+  #word-display .normal { color: #e0e0e0; }
+
+  /* Focal guides */
+  #focal-guides {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60%;
+    max-width: 500px;
+    margin-bottom: 8px;
+    position: relative;
+  }
+  #focal-guides::before, #focal-guides::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #333;
+  }
+  #focal-guides::before { left: 0; }
+  #focal-guides::after { right: 0; }
+
+  /* ── Controls ── */
+  #controls {
+    padding: 24px 32px 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    max-width: 600px;
+  }
+
+  .control-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  button {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 10px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }
+  button:hover { background: #252525; border-color: #555; }
+  button:active { background: #333; }
+
+  #play-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    padding: 0;
+    justify-content: center;
+    font-size: 22px;
+    background: #ff6b35;
+    border-color: #ff6b35;
+    color: #fff;
+  }
+  #play-btn:hover { background: #e55a25; }
+
+  .skip-btn { font-size: 14px; padding: 8px 14px; }
+
+  /* Speed */
+  #speed-row { gap: 16px; }
+  #speed-label { font-size: 14px; color: #888; min-width: 80px; text-align: center; }
+  #speed-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 200px;
+    height: 4px;
+    background: #333;
+    border-radius: 2px;
+    outline: none;
+  }
+  #speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ff6b35;
+    cursor: pointer;
+  }
+
+  /* Progress */
+  #progress-row { width: 100%; }
+  #progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #222;
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+  }
+  #progress-fill {
+    height: 100%;
+    background: #ff6b35;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.1s linear;
+    pointer-events: none;
+  }
+  #word-counter { font-size: 13px; color: #666; margin-top: 4px; text-align: center; }
+
+  /* Panel toggle */
+  #panel-toggle {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    padding: 8px 12px;
+    font-size: 13px;
+    z-index: 10;
+  }
+
+  /* New file button */
+  #new-file-btn {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    padding: 8px 12px;
+    font-size: 13px;
+    z-index: 10;
+  }
+
+  /* File name display */
+  #file-name {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    color: #555;
+    z-index: 10;
+  }
+
+  /* ── Side Panel ── */
+  #side-panel {
+    width: 0;
+    overflow: hidden;
+    background: #141414;
+    border-left: 1px solid #222;
+    transition: width 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  #side-panel.open { width: 360px; }
+
+  #panel-header {
+    padding: 16px;
+    border-bottom: 1px solid #222;
+    font-size: 14px;
+    font-weight: 600;
+    color: #888;
+    flex-shrink: 0;
+  }
+
+  #panel-text {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: #999;
+    word-wrap: break-word;
+    cursor: pointer;
+  }
+  #panel-text::-webkit-scrollbar { width: 6px; }
+  #panel-text::-webkit-scrollbar-track { background: transparent; }
+  #panel-text::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+  #panel-text .word {
+    display: inline;
+    padding: 1px 0;
+    border-radius: 2px;
+    transition: background 0.1s, color 0.1s;
+    cursor: pointer;
+  }
+  #panel-text .word:hover { color: #ccc; }
+  #panel-text .word.active {
+    background: rgba(255, 107, 53, 0.25);
+    color: #fff;
+  }
+
+  /* Keyboard hints */
+  #hints {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #444;
+    display: flex;
+    gap: 16px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* Upload wrapper */
+  #upload-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 80px;
+  }
+  kbd {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 11px;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+
+<div id="main">
+  <!-- Upload View -->
+  <div id="upload-view">
+    <div id="dropzone">
+      <div class="icon">&#128196;</div>
+      <div class="label">Drop a file here or click to upload</div>
+      <div class="sublabel">PDF, text, markdown, code files — anything with text</div>
+    </div>
+    <input type="file" id="file-input">
+
+    <div class="divider">or paste text</div>
+    <div id="paste-area">
+      <textarea id="paste-input" placeholder="Paste or type your text here..."></textarea>
+      <button id="load-paste-btn">Load Text</button>
+    </div>
+  </div>
+
+  <!-- Reader View -->
+  <div id="reader">
+    <button id="new-file-btn" title="Load new file">&#8634; New File</button>
+    <span id="file-name"></span>
+    <button id="panel-toggle" title="Toggle text panel (P)">&#9776; Panel</button>
+
+    <div id="word-container">
+      <div id="word-display">
+        <span class="normal"></span><span class="orp"></span><span class="normal"></span>
+      </div>
+    </div>
+
+    <div id="controls">
+      <div class="control-row">
+        <button class="skip-btn" id="skip-back" title="Back 10 words (←)">&#9664;&#9664; 10</button>
+        <button id="play-btn" title="Play/Pause (Space)">&#9654;</button>
+        <button class="skip-btn" id="skip-fwd" title="Forward 10 words (→)">10 &#9654;&#9654;</button>
+      </div>
+      <div class="control-row" id="speed-row">
+        <span id="speed-label">300 wpm</span>
+        <input type="range" id="speed-slider" min="100" max="1000" step="25" value="300">
+      </div>
+      <div class="control-row" id="progress-row">
+        <div style="width: 100%;">
+          <div id="progress-bar"><div id="progress-fill"></div></div>
+          <div id="word-counter">Word 0 / 0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="hints" style="display: none;">
+    <span><kbd>Space</kbd> Play/Pause</span>
+    <span><kbd>←</kbd><kbd>→</kbd> Skip</span>
+    <span><kbd>↑</kbd><kbd>↓</kbd> Speed</span>
+    <span><kbd>P</kbd> Panel</span>
+  </div>
+</div>
+
+<div id="side-panel">
+  <div id="panel-header">Document Text</div>
+  <div id="panel-text"></div>
+</div>
+
+<script>
+  // ── PDF.js worker ──
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // ── State ──
+  let words = [];
+  let currentIndex = 0;
+  let isPlaying = false;
+  let wpm = 300;
+  let timer = null;
+  let panelOpen = false;
+  let wordSpans = [];
+
+  // ── DOM refs ──
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('file-input');
+  const reader = document.getElementById('reader');
+  const wordDisplay = document.getElementById('word-display');
+  const playBtn = document.getElementById('play-btn');
+  const skipBack = document.getElementById('skip-back');
+  const skipFwd = document.getElementById('skip-fwd');
+  const speedSlider = document.getElementById('speed-slider');
+  const speedLabel = document.getElementById('speed-label');
+  const progressBar = document.getElementById('progress-bar');
+  const progressFill = document.getElementById('progress-fill');
+  const wordCounter = document.getElementById('word-counter');
+  const panelToggle = document.getElementById('panel-toggle');
+  const sidePanel = document.getElementById('side-panel');
+  const panelText = document.getElementById('panel-text');
+  const fileName = document.getElementById('file-name');
+  const newFileBtn = document.getElementById('new-file-btn');
+  const hints = document.getElementById('hints');
+  const pasteInput = document.getElementById('paste-input');
+  const loadPasteBtn = document.getElementById('load-paste-btn');
+  const uploadView = document.getElementById('upload-view');
+
+  // ── File handling ──
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  newFileBtn.addEventListener('click', () => {
+    pause();
+    words = [];
+    currentIndex = 0;
+    uploadView.style.display = 'flex';
+    reader.style.display = 'none';
+    hints.style.display = 'flex';
+    sidePanel.classList.remove('open');
+    panelOpen = false;
+    fileInput.value = '';
+    pasteInput.value = '';
+  });
+
+  loadPasteBtn.addEventListener('click', () => {
+    const text = pasteInput.value.trim();
+    if (!text) return;
+    loadText(text, 'Pasted Text');
+  });
+
+  async function handleFile(file) {
+    let text = '';
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      text = await extractPdfText(file);
+    } else {
+      text = await file.text();
+    }
+    loadText(text, file.name);
+  }
+
+  async function extractPdfText(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str).join(' ') + '\n';
+    }
+    return text;
+  }
+
+  function loadText(text, name) {
+    // Split into words, filter empties
+    words = text.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) { alert('No text found in file.'); return; }
+
+    currentIndex = 0;
+    fileName.textContent = name;
+    uploadView.style.display = 'none';
+    reader.style.display = 'flex';
+    hints.style.display = 'flex';
+
+    // Build panel text
+    buildPanelText();
+    displayWord(0);
+    updateProgress();
+  }
+
+  function buildPanelText() {
+    panelText.innerHTML = '';
+    wordSpans = [];
+    words.forEach((word, i) => {
+      const span = document.createElement('span');
+      span.className = 'word';
+      span.textContent = word;
+      span.dataset.index = i;
+      span.addEventListener('click', () => {
+        currentIndex = i;
+        displayWord(currentIndex);
+        updateProgress();
+      });
+      panelText.appendChild(span);
+      // Add space
+      panelText.appendChild(document.createTextNode(' '));
+      wordSpans.push(span);
+    });
+  }
+
+  // ── ORP display ──
+  function displayWord(index) {
+    if (index < 0 || index >= words.length) return;
+    const word = words[index];
+    const orpPos = getOrpPosition(word);
+
+    const before = word.substring(0, orpPos);
+    const orpChar = word[orpPos] || '';
+    const after = word.substring(orpPos + 1);
+
+    wordDisplay.innerHTML =
+      `<span class="normal">${escapeHtml(before)}</span>` +
+      `<span class="orp">${escapeHtml(orpChar)}</span>` +
+      `<span class="normal">${escapeHtml(after)}</span>`;
+
+    // Update panel highlight
+    if (wordSpans.length > 0) {
+      wordSpans.forEach(s => s.classList.remove('active'));
+      if (wordSpans[index]) {
+        wordSpans[index].classList.add('active');
+        if (panelOpen) {
+          wordSpans[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }
+    }
+  }
+
+  function getOrpPosition(word) {
+    const len = word.length;
+    if (len <= 1) return 0;
+    if (len <= 3) return 0;
+    if (len <= 5) return 1;
+    if (len <= 9) return 2;
+    if (len <= 13) return 3;
+    return 4;
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ── Playback ──
+  function play() {
+    if (words.length === 0) return;
+    if (currentIndex >= words.length) currentIndex = 0;
+    isPlaying = true;
+    playBtn.innerHTML = '&#9646;&#9646;';
+    tick();
+  }
+
+  function pause() {
+    isPlaying = false;
+    playBtn.innerHTML = '&#9654;';
+    if (timer) { clearTimeout(timer); timer = null; }
+  }
+
+  function togglePlay() {
+    if (isPlaying) pause(); else play();
+  }
+
+  function tick() {
+    if (!isPlaying || currentIndex >= words.length) {
+      if (currentIndex >= words.length) pause();
+      return;
+    }
+    displayWord(currentIndex);
+    updateProgress();
+    currentIndex++;
+
+    // Longer pause for punctuation at end of word
+    const word = words[currentIndex - 1];
+    let delay = 60000 / wpm;
+    if (/[.!?;:]$/.test(word)) delay *= 1.8;
+    else if (/[,]$/.test(word)) delay *= 1.3;
+
+    timer = setTimeout(tick, delay);
+  }
+
+  function updateProgress() {
+    const pct = words.length > 0 ? (currentIndex / (words.length - 1)) * 100 : 0;
+    progressFill.style.width = Math.min(pct, 100) + '%';
+    wordCounter.textContent = `Word ${currentIndex + 1} / ${words.length.toLocaleString()}`;
+  }
+
+  function skip(delta) {
+    currentIndex = Math.max(0, Math.min(words.length - 1, currentIndex + delta));
+    displayWord(currentIndex);
+    updateProgress();
+  }
+
+  // ── Controls ──
+  playBtn.addEventListener('click', togglePlay);
+  skipBack.addEventListener('click', () => skip(-10));
+  skipFwd.addEventListener('click', () => skip(10));
+
+  speedSlider.addEventListener('input', e => {
+    wpm = parseInt(e.target.value);
+    speedLabel.textContent = wpm + ' wpm';
+  });
+
+  progressBar.addEventListener('click', e => {
+    const rect = progressBar.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    currentIndex = Math.floor(pct * words.length);
+    currentIndex = Math.max(0, Math.min(words.length - 1, currentIndex));
+    displayWord(currentIndex);
+    updateProgress();
+  });
+
+  panelToggle.addEventListener('click', () => {
+    panelOpen = !panelOpen;
+    sidePanel.classList.toggle('open', panelOpen);
+    if (panelOpen && wordSpans[currentIndex]) {
+      wordSpans[currentIndex].scrollIntoView({ block: 'center' });
+    }
+  });
+
+  // ── Keyboard ──
+  document.addEventListener('keydown', e => {
+    // Don't capture if typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    switch (e.code) {
+      case 'Space':
+        e.preventDefault();
+        if (words.length > 0) togglePlay();
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        skip(-10);
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        skip(10);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        wpm = Math.min(1000, wpm + 50);
+        speedSlider.value = wpm;
+        speedLabel.textContent = wpm + ' wpm';
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        wpm = Math.max(100, wpm - 50);
+        speedSlider.value = wpm;
+        speedLabel.textContent = wpm + ' wpm';
+        break;
+      case 'KeyP':
+        panelToggle.click();
+        break;
+    }
+  });
+
+  // ── Also support drop on whole page ──
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    if (e.dataTransfer.files[0] && dropzone.style.display !== 'none') {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  });
+</script>
+</body>
+</html>
