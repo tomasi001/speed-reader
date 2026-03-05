@@ -113,6 +113,8 @@
     justify-content: center;
     width: 100%;
     min-height: 0;
+    padding: 0 24px;
+    overflow: hidden;
   }
   #word-display {
     font-size: clamp(36px, 6vw, 72px);
@@ -125,26 +127,45 @@
   #word-display .orp { color: #ff6b35; }
   #word-display .normal { color: #e0e0e0; }
 
-  /* Focal guides */
-  #focal-guides {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 60%;
-    max-width: 500px;
-    margin-bottom: 8px;
-    position: relative;
+  /* Code block display in center */
+  #code-display {
+    display: none;
+    max-width: 90%;
+    max-height: 60vh;
+    overflow: auto;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 20px 24px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #c8c8c8;
+    white-space: pre;
+    text-align: left;
+    tab-size: 2;
   }
-  #focal-guides::before, #focal-guides::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: #333;
+  #code-display::-webkit-scrollbar { width: 6px; height: 6px; }
+  #code-display::-webkit-scrollbar-track { background: transparent; }
+  #code-display::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  #code-display .code-lang {
+    display: inline-block;
+    font-size: 11px;
+    color: #666;
+    background: #252525;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-family: inherit;
   }
-  #focal-guides::before { left: 0; }
-  #focal-guides::after { right: 0; }
+  #code-display .code-hint {
+    display: block;
+    text-align: center;
+    font-size: 12px;
+    color: #555;
+    margin-top: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
 
   /* ── Controls ── */
   #controls {
@@ -319,6 +340,39 @@
     color: #fff;
   }
 
+  /* Code blocks in side panel */
+  #panel-text .panel-code-block {
+    display: block;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #b0b0b0;
+    white-space: pre;
+    overflow-x: auto;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    tab-size: 2;
+  }
+  #panel-text .panel-code-block:hover { border-color: #444; }
+  #panel-text .panel-code-block.active {
+    border-color: #ff6b35;
+    background: rgba(255, 107, 53, 0.05);
+  }
+  #panel-text .panel-code-block .code-lang-tag {
+    display: inline-block;
+    font-size: 10px;
+    color: #555;
+    background: #222;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-bottom: 8px;
+  }
+
   /* Keyboard hints */
   #hints {
     position: absolute;
@@ -379,13 +433,14 @@
       <div id="word-display">
         <span class="normal"></span><span class="orp"></span><span class="normal"></span>
       </div>
+      <div id="code-display"></div>
     </div>
 
     <div id="controls">
       <div class="control-row">
-        <button class="skip-btn" id="skip-back" title="Back 10 words (←)">&#9664;&#9664; 10</button>
+        <button class="skip-btn" id="skip-back" title="Back 10 words (&#x2190;)">&#9664;&#9664; 10</button>
         <button id="play-btn" title="Play/Pause (Space)">&#9654;</button>
-        <button class="skip-btn" id="skip-fwd" title="Forward 10 words (→)">10 &#9654;&#9654;</button>
+        <button class="skip-btn" id="skip-fwd" title="Forward 10 words (&#x2192;)">10 &#9654;&#9654;</button>
       </div>
       <div class="control-row" id="speed-row">
         <span id="speed-label">300 wpm</span>
@@ -402,8 +457,8 @@
 
   <div id="hints" style="display: none;">
     <span><kbd>Space</kbd> Play/Pause</span>
-    <span><kbd>←</kbd><kbd>→</kbd> Skip</span>
-    <span><kbd>↑</kbd><kbd>↓</kbd> Speed</span>
+    <span><kbd>&#x2190;</kbd><kbd>&#x2192;</kbd> Skip</span>
+    <span><kbd>&#x2191;</kbd><kbd>&#x2193;</kbd> Speed</span>
     <span><kbd>P</kbd> Panel</span>
   </div>
 </div>
@@ -418,19 +473,24 @@
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   // ── State ──
-  let words = [];
+  // segments: array of { type: 'prose', words: string[] } | { type: 'code', content: string, lang: string }
+  let segments = [];
+  // Flat index across all prose words (code blocks count as 1 unit each)
+  let items = [];     // { type: 'word', word: string, segIdx: number, wordIdx: number } | { type: 'code', segIdx: number }
+  let totalItems = 0;
   let currentIndex = 0;
   let isPlaying = false;
   let wpm = 300;
   let timer = null;
   let panelOpen = false;
-  let wordSpans = [];
+  let itemElements = []; // parallel to items[], DOM elements in side panel
 
   // ── DOM refs ──
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('file-input');
-  const reader = document.getElementById('reader');
+  const readerEl = document.getElementById('reader');
   const wordDisplay = document.getElementById('word-display');
+  const codeDisplay = document.getElementById('code-display');
   const playBtn = document.getElementById('play-btn');
   const skipBack = document.getElementById('skip-back');
   const skipFwd = document.getElementById('skip-fwd');
@@ -442,7 +502,7 @@
   const panelToggle = document.getElementById('panel-toggle');
   const sidePanel = document.getElementById('side-panel');
   const panelText = document.getElementById('panel-text');
-  const fileName = document.getElementById('file-name');
+  const fileNameEl = document.getElementById('file-name');
   const newFileBtn = document.getElementById('new-file-btn');
   const hints = document.getElementById('hints');
   const pasteInput = document.getElementById('paste-input');
@@ -463,11 +523,12 @@
 
   newFileBtn.addEventListener('click', () => {
     pause();
-    words = [];
+    segments = [];
+    items = [];
     currentIndex = 0;
     uploadView.style.display = 'flex';
-    reader.style.display = 'none';
-    hints.style.display = 'flex';
+    readerEl.style.display = 'none';
+    hints.style.display = 'none';
     sidePanel.classList.remove('open');
     panelOpen = false;
     fileInput.value = '';
@@ -502,66 +563,156 @@
     return text;
   }
 
+  // ── Parse text into segments ──
+  function parseSegments(text) {
+    const segs = [];
+    const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+    let lastEnd = 0;
+    let match;
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      // Prose before code block
+      const proseBefore = text.substring(lastEnd, match.index);
+      if (proseBefore.trim()) {
+        segs.push({ type: 'prose', words: proseBefore.split(/\s+/).filter(w => w.length > 0) });
+      }
+      // Code block
+      segs.push({ type: 'code', lang: match[1] || '', content: match[2].replace(/\n$/, '') });
+      lastEnd = match.index + match[0].length;
+    }
+
+    // Remaining prose
+    const remaining = text.substring(lastEnd);
+    if (remaining.trim()) {
+      segs.push({ type: 'prose', words: remaining.split(/\s+/).filter(w => w.length > 0) });
+    }
+
+    return segs;
+  }
+
+  // Build flat items list from segments
+  function buildItems(segs) {
+    const list = [];
+    segs.forEach((seg, segIdx) => {
+      if (seg.type === 'prose') {
+        seg.words.forEach((word, wordIdx) => {
+          list.push({ type: 'word', word, segIdx, wordIdx });
+        });
+      } else {
+        list.push({ type: 'code', segIdx });
+      }
+    });
+    return list;
+  }
+
   function loadText(text, name) {
-    // Split into words, filter empties
-    words = text.split(/\s+/).filter(w => w.length > 0);
-    if (words.length === 0) { alert('No text found in file.'); return; }
+    segments = parseSegments(text);
+    items = buildItems(segments);
+    totalItems = items.length;
+
+    if (totalItems === 0) { alert('No text found in file.'); return; }
 
     currentIndex = 0;
-    fileName.textContent = name;
+    fileNameEl.textContent = name;
     uploadView.style.display = 'none';
-    reader.style.display = 'flex';
+    readerEl.style.display = 'flex';
     hints.style.display = 'flex';
 
-    // Build panel text
     buildPanelText();
-    displayWord(0);
+    displayItem(0);
     updateProgress();
   }
 
+  // ── Build side panel ──
   function buildPanelText() {
     panelText.innerHTML = '';
-    wordSpans = [];
-    words.forEach((word, i) => {
-      const span = document.createElement('span');
-      span.className = 'word';
-      span.textContent = word;
-      span.dataset.index = i;
-      span.addEventListener('click', () => {
-        currentIndex = i;
-        displayWord(currentIndex);
-        updateProgress();
-      });
-      panelText.appendChild(span);
-      // Add space
-      panelText.appendChild(document.createTextNode(' '));
-      wordSpans.push(span);
+    itemElements = [];
+
+    segments.forEach((seg, segIdx) => {
+      if (seg.type === 'prose') {
+        seg.words.forEach((word, wordIdx) => {
+          const span = document.createElement('span');
+          span.className = 'word';
+          span.textContent = word;
+          // Find the flat index for this word
+          const flatIdx = items.findIndex(it => it.segIdx === segIdx && it.type === 'word' && it.wordIdx === wordIdx);
+          span.addEventListener('click', () => {
+            currentIndex = flatIdx;
+            displayItem(currentIndex);
+            updateProgress();
+          });
+          panelText.appendChild(span);
+          panelText.appendChild(document.createTextNode(' '));
+          itemElements[flatIdx] = span;
+        });
+      } else {
+        // Code block in panel
+        const block = document.createElement('div');
+        block.className = 'panel-code-block';
+        let html = '';
+        if (seg.lang) {
+          html += `<span class="code-lang-tag">${escapeHtml(seg.lang)}</span>\n`;
+        }
+        html += escapeHtml(seg.content);
+        block.innerHTML = html;
+
+        const flatIdx = items.findIndex(it => it.segIdx === segIdx && it.type === 'code');
+        block.addEventListener('click', () => {
+          currentIndex = flatIdx;
+          displayItem(currentIndex);
+          updateProgress();
+        });
+        panelText.appendChild(block);
+        itemElements[flatIdx] = block;
+      }
     });
   }
 
-  // ── ORP display ──
-  function displayWord(index) {
-    if (index < 0 || index >= words.length) return;
-    const word = words[index];
-    const orpPos = getOrpPosition(word);
+  // ── Display current item ──
+  function displayItem(index) {
+    if (index < 0 || index >= totalItems) return;
+    const item = items[index];
 
-    const before = word.substring(0, orpPos);
-    const orpChar = word[orpPos] || '';
-    const after = word.substring(orpPos + 1);
+    if (item.type === 'word') {
+      // Show RSVP word
+      wordDisplay.style.display = '';
+      codeDisplay.style.display = 'none';
+      const word = item.word;
+      const orpPos = getOrpPosition(word);
+      const before = word.substring(0, orpPos);
+      const orpChar = word[orpPos] || '';
+      const after = word.substring(orpPos + 1);
+      wordDisplay.innerHTML =
+        `<span class="normal">${escapeHtml(before)}</span>` +
+        `<span class="orp">${escapeHtml(orpChar)}</span>` +
+        `<span class="normal">${escapeHtml(after)}</span>`;
+    } else {
+      // Show code block — pause playback
+      wordDisplay.style.display = 'none';
+      codeDisplay.style.display = 'block';
+      const seg = segments[item.segIdx];
+      let html = '';
+      if (seg.lang) {
+        html += `<span class="code-lang">${escapeHtml(seg.lang)}</span>\n`;
+      }
+      html += escapeHtml(seg.content);
+      html += `<span class="code-hint">Press &#x2192; or Space to continue</span>`;
+      codeDisplay.innerHTML = html;
 
-    wordDisplay.innerHTML =
-      `<span class="normal">${escapeHtml(before)}</span>` +
-      `<span class="orp">${escapeHtml(orpChar)}</span>` +
-      `<span class="normal">${escapeHtml(after)}</span>`;
+      if (isPlaying) pause();
+    }
 
     // Update panel highlight
-    if (wordSpans.length > 0) {
-      wordSpans.forEach(s => s.classList.remove('active'));
-      if (wordSpans[index]) {
-        wordSpans[index].classList.add('active');
-        if (panelOpen) {
-          wordSpans[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
-        }
+    highlightPanelItem(index);
+  }
+
+  function highlightPanelItem(index) {
+    // Clear all highlights
+    itemElements.forEach(el => { if (el) el.classList.remove('active'); });
+    if (itemElements[index]) {
+      itemElements[index].classList.add('active');
+      if (panelOpen) {
+        itemElements[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     }
   }
@@ -582,8 +733,13 @@
 
   // ── Playback ──
   function play() {
-    if (words.length === 0) return;
-    if (currentIndex >= words.length) currentIndex = 0;
+    if (totalItems === 0) return;
+    if (currentIndex >= totalItems) currentIndex = 0;
+    // If sitting on a code block, advance past it first
+    if (items[currentIndex] && items[currentIndex].type === 'code') {
+      currentIndex++;
+      if (currentIndex >= totalItems) { pause(); return; }
+    }
     isPlaying = true;
     playBtn.innerHTML = '&#9646;&#9646;';
     tick();
@@ -600,16 +756,27 @@
   }
 
   function tick() {
-    if (!isPlaying || currentIndex >= words.length) {
-      if (currentIndex >= words.length) pause();
+    if (!isPlaying || currentIndex >= totalItems) {
+      if (currentIndex >= totalItems) pause();
       return;
     }
-    displayWord(currentIndex);
+
+    const item = items[currentIndex];
+
+    // If we hit a code block, display it and pause
+    if (item.type === 'code') {
+      displayItem(currentIndex);
+      updateProgress();
+      // pause() is called inside displayItem for code blocks
+      return;
+    }
+
+    displayItem(currentIndex);
     updateProgress();
     currentIndex++;
 
-    // Longer pause for punctuation at end of word
-    const word = words[currentIndex - 1];
+    // Longer pause for punctuation
+    const word = item.word;
     let delay = 60000 / wpm;
     if (/[.!?;:]$/.test(word)) delay *= 1.8;
     else if (/[,]$/.test(word)) delay *= 1.3;
@@ -618,14 +785,23 @@
   }
 
   function updateProgress() {
-    const pct = words.length > 0 ? (currentIndex / (words.length - 1)) * 100 : 0;
+    const pct = totalItems > 1 ? (currentIndex / (totalItems - 1)) * 100 : 0;
     progressFill.style.width = Math.min(pct, 100) + '%';
-    wordCounter.textContent = `Word ${currentIndex + 1} / ${words.length.toLocaleString()}`;
+
+    // Count prose words only for the counter
+    const proseCount = items.filter(it => it.type === 'word').length;
+    const currentProseIdx = items.slice(0, currentIndex + 1).filter(it => it.type === 'word').length;
+    const item = items[currentIndex];
+    if (item && item.type === 'code') {
+      wordCounter.textContent = `Code block (${proseCount.toLocaleString()} words total)`;
+    } else {
+      wordCounter.textContent = `Word ${currentProseIdx} / ${proseCount.toLocaleString()}`;
+    }
   }
 
   function skip(delta) {
-    currentIndex = Math.max(0, Math.min(words.length - 1, currentIndex + delta));
-    displayWord(currentIndex);
+    currentIndex = Math.max(0, Math.min(totalItems - 1, currentIndex + delta));
+    displayItem(currentIndex);
     updateProgress();
   }
 
@@ -642,29 +818,28 @@
   progressBar.addEventListener('click', e => {
     const rect = progressBar.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    currentIndex = Math.floor(pct * words.length);
-    currentIndex = Math.max(0, Math.min(words.length - 1, currentIndex));
-    displayWord(currentIndex);
+    currentIndex = Math.floor(pct * totalItems);
+    currentIndex = Math.max(0, Math.min(totalItems - 1, currentIndex));
+    displayItem(currentIndex);
     updateProgress();
   });
 
   panelToggle.addEventListener('click', () => {
     panelOpen = !panelOpen;
     sidePanel.classList.toggle('open', panelOpen);
-    if (panelOpen && wordSpans[currentIndex]) {
-      wordSpans[currentIndex].scrollIntoView({ block: 'center' });
+    if (panelOpen && itemElements[currentIndex]) {
+      itemElements[currentIndex].scrollIntoView({ block: 'center' });
     }
   });
 
   // ── Keyboard ──
   document.addEventListener('keydown', e => {
-    // Don't capture if typing in an input
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     switch (e.code) {
       case 'Space':
         e.preventDefault();
-        if (words.length > 0) togglePlay();
+        if (totalItems > 0) togglePlay();
         break;
       case 'ArrowLeft':
         e.preventDefault();
@@ -696,7 +871,7 @@
   document.addEventListener('dragover', e => e.preventDefault());
   document.addEventListener('drop', e => {
     e.preventDefault();
-    if (e.dataTransfer.files[0] && dropzone.style.display !== 'none') {
+    if (e.dataTransfer.files[0] && uploadView.style.display !== 'none') {
       handleFile(e.dataTransfer.files[0]);
     }
   });
